@@ -1,0 +1,219 @@
+<html>
+<!--******************************************************************************************************/
+/** Premier League Web Data Connector For Tableau														**/
+/** Gets Premier League Season History Stats From http://fantasy.premierleague.com/				    **/
+/** Author Alex Ross 																					**/
+/** Version 1.0                               															**/
+/*******************************************************************************************************-->
+<meta http-equiv="Cache-Control" content="no-store" />
+<head>
+
+<meta charset="utf-8">
+	<meta http-equiv="X-UA-Compatible" content="IE=edge">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<meta name="description" content="">
+	<meta name="author" content="">
+	
+	<!-- Title Core CSS -->
+	<title>Premier League Season History Web Data Connector</title>
+
+	<!-- Bootstrap Core CSS -->
+	<link href="css/bootstrap.min.css" rel="stylesheet">
+
+	<!-- Custom CSS -->
+	<link href="css/stylish-portfolio.css" rel="stylesheet">
+
+	<!-- Custom Fonts -->
+	<link href="font-awesome/css/font-awesome.min.css" rel="stylesheet" type="text/css">
+	<link href="http://fonts.googleapis.com/css?family=Source+Sans+Pro:300,400,700,300italic,400italic,700italic" rel="stylesheet" type="text/css">
+
+<script src="http://ajax.googleapis.com/ajax/libs/jquery/1.7.2/jquery.min.js" type="text/javascript"></script>
+<script type="text/javascript">
+
+var CHUNKSIZE=10;  //Number of players to get data for before calling back to Tableau. Used to return the data in chunks and avoid timeouts in Tableau.
+
+function init() 
+{
+	tableau.initCallback();
+}
+
+function shutdown() {
+	tableau.shutdownCallback();
+}
+
+function getColumnHeaders()
+{
+	//setup field names and types to store weather data
+	var fieldNames = ['first_name','id','second_name','team_name','team_id','type_name','Season','Minutes Played','Goals Scored','Assists','Clean Sheets','Goals Conceded','Own Goals','Penalties Saved','Penalties Missed','Yellow Cards','Red Cards','Saves','Bonus','EA Sports PPI','Bonus Points System','Value','Points'];
+	var fieldTypes = ['string','float','string','string','float','string','string','float','float','float','float','float','float','float','float','float','float','float','float','float','float','float','float'];
+	tableau.headersCallback(fieldNames, fieldTypes);
+}
+
+function getTableData(lastRecordNumber) {
+
+	if (!tableau) {
+		alert("premiershipwebconnect getColumnHeaders - tableau NOT defined!");
+		return;
+		}
+
+	tableau.log("premiershipwebconnect - getTableData connectionData=" + tableau.connectionData);
+	tableau.log("premiershipwebconnect - getTableData lastRecordNumber=" + lastRecordNumber);
+
+	//parse lastRecordNumer as Integer as Tableau stores this as a string
+	lastRecordNumber = Number(lastRecordNumber); 
+	
+	// Return if lastRecordNumber is greater than 1000
+	if (lastRecordNumber>=1000) {
+	//if (lastRecordNumber>=30) { //test with 30 players
+		tableau.dataCallback([], lastRecordNumber);
+		return;
+	}
+	
+	//add CHUNKSIZE to lastRecordNumber to create newlastRecordNumber which will be used to pass back to Tableau
+	newlastRecordNumber = lastRecordNumber + CHUNKSIZE;
+	
+	//create list of playerids to get data for
+	var playeridlist = [];
+    for (var i = lastRecordNumber+1; i <= newlastRecordNumber; i++) {
+       playeridlist.push(i);
+    }
+	
+	//build array of urls to get from OpenWeatherMap API
+	var urls = _buildUrls(playeridlist);
+	
+	//get multiple JSON requests and callback to tableau when finished
+	multi_getJSON(urls,newlastRecordNumber,getResults);	
+}
+
+//function takes list of playerids, and returns an list of URLs
+function _buildUrls(playerids){
+	var urls = [];
+	for (y=0;y<playerids.length;y++)
+	{
+		urls.push('premiershipwebconnect.php?id=' + playerids[y] );
+	}		
+	return urls;
+}
+			
+//function to get multiple JSON strings
+function multi_getJSON(urls,newlastRecordNumber,callback)
+{
+	// handle empty urls
+	if(urls.length == 0)
+	{	
+		callback(results);
+		return;
+	}
+		
+	//use promises to get JSON data for all players and wait till they have all finished
+	return $.Deferred(function() {
+		var self = this;
+		var results = [];
+		
+		var d = $.Deferred(),
+		stack = [];
+		
+		urls.forEach(function(url, index)
+		{	
+			stack.push(
+			$.getJSON(url, function(data)
+			{
+				if(data){
+					results[index] = data;
+				}
+			}).fail(function() { 
+				//call back to tableau in the event of failure
+				tableau.dataCallback([], newlastRecordNumber);		
+			})); 
+		});
+		$.when.apply($, stack).done(function() {
+		callback(results,newlastRecordNumber);		
+		self.resolve();
+		});
+	});
+}
+
+//processes array of json results and calls back to tableau
+function getResults(results,newlastRecordNumber)
+{
+	// handle empty results
+	if(results.length == 0)
+	{
+		tableau.dataCallback([], newlastRecordNumber);
+		return;
+	}
+		
+	var toRet = [];
+	for (i = 0; i < results.length; ++i) {
+		//make sure we don't output anything for null values or if -1 returned
+		if(!results[i] || results[i]=='-1')
+		{
+			tableau.dataCallback(toRet, newlastRecordNumber);
+		    return;
+		}
+		var season_history = results[i].season_history;
+	
+			for (y = 0; y < season_history.length; ++y) {
+			entry = {
+				first_name: results[i].first_name,
+				id: results[i].id,
+				second_name: results[i].second_name,
+				team_id: results[i].team_id,
+				team_name: results[i].team_name,
+				type_name: results[i].type_name,
+				Season: season_history[y][0],
+				'Minutes Played': season_history[y][1],
+				'Goals Scored': season_history[y][2],
+				'Assists': season_history[y][3],
+				'Clean Sheets': season_history[y][4],
+				'Goals Conceded': season_history[y][5],
+				'Own Goals': season_history[y][6],
+				'Penalties Saved': season_history[y][7],
+				'Penalties Missed': season_history[y][8],
+				'Yellow Cards': season_history[y][9],
+				'Red Cards': season_history[y][10],
+				'Saves': season_history[y][11],
+				'Bonus': season_history[y][12],
+				'EA Sports PPI': season_history[y][13],
+				'Bonus Points System': season_history[y][14],
+				'Value': season_history[y][15],
+				'Points': season_history[y][16]
+			};
+				toRet.push(entry);	
+			}
+	}
+	tableau.dataCallback(toRet, newlastRecordNumber);
+}
+
+$(document).ready(function () {
+	//register some input handlers
+	$("#inputForm").submit(function() { 
+		// This event fires when a button is clicked 
+		event.preventDefault(); 
+		// name the data source. This will be the data source name in Tableau 
+		tableau.connectionName = 'Premier League Season History Stats'; 
+		tableau.submit(); 
+	}); 
+});
+
+</script>
+</head>
+<body>
+
+	<!-- Header -->
+	<header id="top" class="header">
+		<div class="text-vertical-center">
+			<h1>Premier League Season History</h1>
+			<br></br>
+		
+	<!-- Input Form -->
+	<form id="inputForm" action="">
+		<input class="btn btn-dark btn-lg" type="submit" value="Get Season History Stats">
+		<h3>This Web Data Connector is Powered By The <a target="_blank" href="http://fantasy.premierleague.com/">Fantasy Premier League</a>.</h3>
+	    <h4>Returns Player Summary Data For Historical Seasons.</h4>
+	</form>
+		</div>
+	</header>
+
+</body>
+</html>
